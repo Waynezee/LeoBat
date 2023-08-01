@@ -4,10 +4,8 @@ import sys
 
 # regions = ["us-east-2","us-west-1","ap-east-1","ap-southeast-1","ap-southeast-2","ap-northeast-1","ca-central-1","eu-central-1","eu-west-2","eu-north-1"]
 # regions = ["us-east-2","ap-southeast-1","ap-northeast-1","ca-central-1","eu-central-1"]
-# regions = ["us-east-2","ap-southeast-1","ap-northeast-1","eu-central-1"]
-regions = ["us-east-1","us-east-2","us-west-1","ap-southeast-2"]
-access_key = ""
-secret_key = ""
+regions = ["us-east-2","ap-southeast-1","ap-northeast-1","eu-central-1"]
+# regions = ["us-east-1","us-east-2","us-west-1","ap-southeast-2"]
 
 total = {}
 total["nodes"] = []
@@ -21,11 +19,11 @@ for region in regions:
     if num <= 0:
         break
     print("region:",region)
-    ec2 = boto3.client('ec2',aws_access_key_id=access_key, aws_secret_access_key=secret_key,region_name=region)
+    ec2 = boto3.client('ec2', region_name=region)
     Filter = [
         {
             'Name': 'tag:Name',
-            'Values': ["cf",]  # test instances name
+            'Values': ["dag-node",]  # test instances name
         },
         {
             'Name': 'instance-state-name',
@@ -51,7 +49,7 @@ for region in regions:
         instance['privaddr'] = instances[i]['PrivateIpAddress']
         instance['port'] = "22"
         instance['user'] = "ubuntu"
-        instance['keypath'] = "/root/.ssh/aws"
+        instance['keypath'] = "~/.ssh/aws"
         instance['region'] = region
         total['nodes'].append(instance)
         num -= 1
@@ -61,8 +59,8 @@ file = "nodes.json"
 with open(file,"w") as f:
     json.dump(total,f,indent=2)
 
-coorEc2 = boto3.client('ec2',aws_access_key_id=access_key, aws_secret_access_key=secret_key,region_name="us-east-2")
-coorResponse = coorEc2.describe_instances(Filters=[{'Name':'tag:Name','Values': ["leobat",]}])  # develop instance name
+coorEc2 = boto3.client('ec2' ,region_name="us-east-2")
+coorResponse = coorEc2.describe_instances(Filters=[{'Name':'tag:Name','Values': ["themix-main",]}])  # develop instance name
 coordinator['private'] = coorResponse['Reservations'][0]['Instances'][0]['PrivateIpAddress']
 coordinator['public'] = coorResponse['Reservations'][0]['Instances'][0]['PublicIpAddress']
 file = "devip.json"

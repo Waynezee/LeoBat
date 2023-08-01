@@ -2,7 +2,7 @@ from re import findall, search
 import sys
 import re
 import os
-KeyStr = str(sys.argv[1])  # to find node log with input
+KeyStr = str(sys.argv[1])
 for i in range(10):
     with open('../log/node'+ str(i+1)+'.log', 'r') as log:
         res = log.read().splitlines()

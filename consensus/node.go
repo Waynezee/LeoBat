@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"leobat-go/common"
-	"leobat-go/crypto"
-	"leobat-go/logger"
-	"leobat-go/network"
-	"leobat-go/utils"
+	"leobat/common"
+	"leobat/crypto"
+	"leobat/execute"
+	"leobat/logger"
+	"leobat/network"
+	"leobat/utils"
 	"sort"
 	"strconv"
 
@@ -99,6 +100,10 @@ type Node struct {
 	startId     int32
 	blockInfos  []*common.BlockInfo
 	excNum      int
+
+	//Executor
+	executor     *execute.Executor
+	executeReply chan *execute.ExecuteInfo
 }
 
 func NewNode(cfg *common.Config, peers map[uint32]common.Peer, logger logger.Logger, conn uint32, identity bool) *Node {
@@ -150,14 +155,16 @@ func NewNode(cfg *common.Config, peers map[uint32]common.Peer, logger logger.Log
 		fastPassStates:     make(map[executionState]int),
 		badCoin:            0,
 
-		currBatch:   new(common.Batch),
-		timeflag:    true,
-		proposeflag: true,
-		blockInfos:  make([]*common.BlockInfo, 0),
-		startId:     1,
-		reqNum:      0,
-		excNum:      0,
+		currBatch:    new(common.Batch),
+		timeflag:     true,
+		proposeflag:  true,
+		blockInfos:   make([]*common.BlockInfo, 0),
+		startId:      1,
+		reqNum:       0,
+		excNum:       0,
+		executeReply: make(chan *execute.ExecuteInfo, 1024),
 	}
+	node.executor = execute.InitExecutor(node.executeReply, logger)
 
 	// node.payload = strings.Repeat("a", cfg.MaxBatchSize*cfg.PayloadSize)
 	// node.logger.Infof("payload size: %v", len(node.payload))
@@ -178,6 +185,7 @@ func (n *Node) Run() {
 		networkPay.Start()
 	}
 	go n.proposeLoop()
+	go n.replyLoop()
 	n.mainLoop()
 }
 
@@ -270,6 +278,15 @@ func (n *Node) proposeLoop() {
 			// } else {
 			// 	n.proposeflag = true
 			// }
+		}
+	}
+}
+
+func (n *Node) replyLoop() {
+	for {
+		info := <-n.executeReply
+		if info.Sender == n.cfg.ID {
+			n.blockBack(info.Round)
 		}
 	}
 }
@@ -879,10 +896,11 @@ func (n *Node) weakExc(round uint32, sender uint32) {
 		if state, ok2 := n.pendings[weakNode.Round][weakNode.Sender]; ok2 {
 			if state == 0 {
 				n.pendings[weakNode.Round][weakNode.Sender] = 1
+				n.executor.Execute(n.payloads[weakNode.Round][weakNode.Sender], weakNode.Round, weakNode.Sender)
 				n.logger.Debugf("%v-%v weak execute", weakNode.Round, weakNode.Sender)
-				if weakNode.Sender == n.cfg.ID {
-					n.blockBack(weakNode.Round)
-				}
+				// if weakNode.Sender == n.cfg.ID {
+				// 	n.blockBack(weakNode.Round)
+				// }
 			}
 		}
 	}
@@ -902,12 +920,14 @@ func (n *Node) allRoundExc(round uint32) {
 	n.execState[round] = FINISH
 	for node := range n.pendings[round] {
 		n.pendings[round][node] = 1
+		n.executor.Execute(n.payloads[round][node], round, node)
+		// fmt.Println("[Block Execution] round = ", round, " node = ", node)
 		if _, ok1 := n.weakLink[round][node]; ok1 {
 			n.weakExc(round, node)
 		}
-		if node == n.cfg.ID {
-			n.blockBack(round)
-		}
+		// if node == n.cfg.ID {
+		// 	n.blockBack(round)
+		// }
 	}
 	if round-1 > 0 && n.execState[round-1] == LEFT {
 		var nodes []uint32
@@ -917,13 +937,14 @@ func (n *Node) allRoundExc(round uint32) {
 				if n.connNum[round-1][node] > 0 {
 					// n.logger.Infof("%v-%v execute in round %v", round, node, n.currRound)
 					n.pendings[round-1][node] = 1
+					n.executor.Execute(n.payloads[round-1][node], round-1, node)
 					if _, ok1 := n.weakLink[round-1][node]; ok1 {
 						n.weakExc(round-1, node)
 					}
 					nodes = append(nodes, node)
-					if node == n.cfg.ID {
-						n.blockBack(round - 1)
-					}
+					// if node == n.cfg.ID {
+					// 	n.blockBack(round - 1)
+					// }
 				} else {
 					n.execState[round-1] = LEFT
 				}
@@ -959,13 +980,14 @@ func (n *Node) partRoundExc(round uint32) {
 			if n.connNum[round][node] >= int(n.cfg.N-n.cfg.F) {
 				// n.logger.Infof("%v-%v execute in round %v", round, node, n.currRound)
 				n.pendings[round][node] = 1
+				n.executor.Execute(n.payloads[round][node], round, node)
 				if _, ok1 := n.weakLink[round][node]; ok1 {
 					n.weakExc(round, node)
 				}
 				nodes = append(nodes, node)
-				if node == n.cfg.ID {
-					n.blockBack(round)
-				}
+				// if node == n.cfg.ID {
+				// 	n.blockBack(round)
+				// }
 			} else {
 				n.execState[round] = LEFT
 			}
@@ -1028,13 +1050,14 @@ func (n *Node) coinPass(coinRound uint32) {
 			if quorumVote[node] >= int(n.cfg.F+1) {
 				// n.logger.Infof("%v-%v execute in round %v", coinRound-2, node, n.currRound)
 				n.pendings[coinRound-2][node] = 1
+				n.executor.Execute(n.payloads[coinRound-2][node], coinRound-2, node)
 				if _, ok1 := n.weakLink[coinRound-2][node]; ok1 {
 					n.weakExc(coinRound-2, node)
 				}
 				nodes = append(nodes, node)
-				if node == n.cfg.ID {
-					n.blockBack(coinRound - 2)
-				}
+				// if node == n.cfg.ID {
+				// 	n.blockBack(coinRound - 2)
+				// }
 			} else {
 				n.execState[coinRound-2] = LEFT
 			}
@@ -1082,13 +1105,14 @@ func (n *Node) excuteBack(round uint32, fatherNodes []uint32) {
 			if quorumVote[node] > 0 {
 				// n.logger.Infof("%v-%v execute in round %v", coinRound-2, node, n.currRound)
 				n.pendings[round][node] = 1
+				n.executor.Execute(n.payloads[round][node], round, node)
 				if _, ok1 := n.weakLink[round][node]; ok1 {
 					n.weakExc(round, node)
 				}
 				nodes = append(nodes, node)
-				if node == n.cfg.ID {
-					n.blockBack(round)
-				}
+				// if node == n.cfg.ID {
+				// 	n.blockBack(round)
+				// }
 			} else {
 				n.execState[round] = LEFT
 			}

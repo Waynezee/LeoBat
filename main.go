@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"io/ioutil"
-	"leobat-go/common"
-	"leobat-go/consensus"
-	"leobat-go/logger"
+	"leobat/common"
+	"leobat/consensus"
+	"leobat/logger"
 	"os"
 	"strconv"
 )

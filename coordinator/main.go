@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"leobat-go/common"
+	"leobat/common"
 	"net"
 	"net/http"
 	"net/rpc"

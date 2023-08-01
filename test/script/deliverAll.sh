@@ -63,6 +63,17 @@ for(( i = 0 ; i < NUM ; i++)); do
         exit
        "
 
+       expect -c "
+       
+        set timeout -1
+
+        spawn scp -i $key ../../go-ycsb/workloads/workloadc $user@$host:leobat-go/
+
+        expect 100%
+
+        exit
+       "
+
 	expect -c "
 
         set timeout -1

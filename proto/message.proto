@@ -33,6 +33,20 @@ message QC {
     uint32 sender = 3;
 }
 
+message Transaction {
+    int64 op = 1;
+    string table = 2;
+    string keyName = 3;
+    repeated string fields = 4;
+    map<string, bytes> values = 5;
+}
+
+message Transactions {
+    repeated Transaction txs = 1;
+}
+
+
+
 message ClientReq {
     int32 startId = 1;
     int32 reqNum = 2;

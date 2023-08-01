@@ -1,5 +1,5 @@
 #!/bin/bash
-# 运行设置丢包率脚本 ./runLoss.sh [server number] [scp:传文件 addmy:设置leobat各个server的丢包率] [loss rate]
+# 运行设置丢包率脚本 ./runLoss.sh [server number] [scp:传文件 addmy:设置Mytumbler各个server的丢包率] [loss rate]
 # 开发机需要runLoss.sh 各个Server需要addLoss.sh 和 nodes.json 以及 sudo pip3 install tcconfig
 # 10节点传文件举例：./runLoss.sh 10 scp
 # 10节点 leobat 5%丢包率举例:  ./runLoss.sh 10 addMy 5 

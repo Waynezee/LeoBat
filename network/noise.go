@@ -2,9 +2,9 @@ package network
 
 import (
 	"context"
-	"leobat-go/common"
-	"leobat-go/crypto"
-	"leobat-go/logger"
+	"leobat/common"
+	"leobat/crypto"
+	"leobat/logger"
 	"net"
 	"strconv"
 	"strings"

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"flag"
 	"io/ioutil"
-	"leobat-go/common"
-	"leobat-go/crypto"
+	"leobat/common"
+	"leobat/crypto"
 	"os"
 	"strconv"
 )

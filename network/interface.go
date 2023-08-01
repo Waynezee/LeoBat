@@ -1,7 +1,7 @@
 package network
 
 import (
-	"leobat-go/common"
+	"leobat/common"
 )
 
 type NetWork interface {
