@@ -26,9 +26,9 @@ type Message_MsgType int32
 
 const (
 	Message_PAYLOAD     Message_MsgType = 0
-	Message_PP         Message_MsgType = 1
-	Message_PREPARE        Message_MsgType = 2
-	Message_READY        Message_MsgType = 3
+	Message_VAL         Message_MsgType = 1
+	Message_BVAL        Message_MsgType = 2
+	Message_PROM        Message_MsgType = 3
 	Message_COIN        Message_MsgType = 4
 	Message_PAYLOADREQ  Message_MsgType = 5
 	Message_PAYLOADRESP Message_MsgType = 6
@@ -36,9 +36,9 @@ const (
 
 var Message_MsgType_name = map[int32]string{
 	0: "PAYLOAD",
-	1: "PP",
-	2: "PREPARE",
-	3: "READY",
+	1: "VAL",
+	2: "BVAL",
+	3: "PROM",
 	4: "COIN",
 	5: "PAYLOADREQ",
 	6: "PAYLOADRESP",
@@ -46,9 +46,9 @@ var Message_MsgType_name = map[int32]string{
 
 var Message_MsgType_value = map[string]int32{
 	"PAYLOAD":     0,
-	"PP":         1,
-	"PREPARE":        2,
-	"READY":        3,
+	"VAL":         1,
+	"BVAL":        2,
+	"PROM":        3,
 	"COIN":        4,
 	"PAYLOADREQ":  5,
 	"PAYLOADRESP": 6,
@@ -422,25 +422,25 @@ func (m *Batch) GetReqs() []*ClientReq {
 	return nil
 }
 
-type PPQC struct {
+type ValQC struct {
 	StrongConnections []byte `protobuf:"bytes,1,opt,name=strongConnections,proto3" json:"strongConnections,omitempty"`
 	WeakConnections   []byte `protobuf:"bytes,2,opt,name=weakConnections,proto3" json:"weakConnections,omitempty"`
 	StrongQCs         []*QC  `protobuf:"bytes,3,rep,name=strongQCs,proto3" json:"strongQCs,omitempty"`
 	WeakQCs           []*QC  `protobuf:"bytes,4,rep,name=weakQCs,proto3" json:"weakQCs,omitempty"`
 }
 
-func (m *PPQC) Reset()         { *m = PPQC{} }
-func (m *PPQC) String() string { return proto.CompactTextString(m) }
-func (*PPQC) ProtoMessage()    {}
-func (*PPQC) Descriptor() ([]byte, []int) {
+func (m *ValQC) Reset()         { *m = ValQC{} }
+func (m *ValQC) String() string { return proto.CompactTextString(m) }
+func (*ValQC) ProtoMessage()    {}
+func (*ValQC) Descriptor() ([]byte, []int) {
 	return fileDescriptor_33c57e4bae7b9afd, []int{6}
 }
-func (m *PPQC) XXX_Unmarshal(b []byte) error {
+func (m *ValQC) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *PPQC) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *ValQC) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_PPQC.Marshal(b, m, deterministic)
+		return xxx_messageInfo_ValQC.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -450,40 +450,40 @@ func (m *PPQC) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 		return b[:n], nil
 	}
 }
-func (m *PPQC) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_PPQC.Merge(m, src)
+func (m *ValQC) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ValQC.Merge(m, src)
 }
-func (m *PPQC) XXX_Size() int {
+func (m *ValQC) XXX_Size() int {
 	return m.Size()
 }
-func (m *PPQC) XXX_DiscardUnknown() {
-	xxx_messageInfo_PPQC.DiscardUnknown(m)
+func (m *ValQC) XXX_DiscardUnknown() {
+	xxx_messageInfo_ValQC.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_PPQC proto.InternalMessageInfo
+var xxx_messageInfo_ValQC proto.InternalMessageInfo
 
-func (m *PPQC) GetStrongConnections() []byte {
+func (m *ValQC) GetStrongConnections() []byte {
 	if m != nil {
 		return m.StrongConnections
 	}
 	return nil
 }
 
-func (m *PPQC) GetWeakConnections() []byte {
+func (m *ValQC) GetWeakConnections() []byte {
 	if m != nil {
 		return m.WeakConnections
 	}
 	return nil
 }
 
-func (m *PPQC) GetStrongQCs() []*QC {
+func (m *ValQC) GetStrongQCs() []*QC {
 	if m != nil {
 		return m.StrongQCs
 	}
 	return nil
 }
 
-func (m *PPQC) GetWeakQCs() []*QC {
+func (m *ValQC) GetWeakQCs() []*QC {
 	if m != nil {
 		return m.WeakQCs
 	}
@@ -498,7 +498,7 @@ func init() {
 	proto.RegisterType((*ClientReq)(nil), "common.ClientReq")
 	proto.RegisterType((*ClientResp)(nil), "common.ClientResp")
 	proto.RegisterType((*Batch)(nil), "common.Batch")
-	proto.RegisterType((*PPQC)(nil), "common.PPQC")
+	proto.RegisterType((*ValQC)(nil), "common.ValQC")
 }
 
 func init() { proto.RegisterFile("message.proto", fileDescriptor_33c57e4bae7b9afd) }
@@ -798,7 +798,7 @@ func (m *Batch) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *PPQC) Marshal() (dAtA []byte, err error) {
+func (m *ValQC) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -808,12 +808,12 @@ func (m *PPQC) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *PPQC) MarshalTo(dAtA []byte) (int, error) {
+func (m *ValQC) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *PPQC) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *ValQC) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -994,7 +994,7 @@ func (m *Batch) Size() (n int) {
 	return n
 }
 
-func (m *PPQC) Size() (n int) {
+func (m *ValQC) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1787,7 +1787,7 @@ func (m *Batch) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *PPQC) Unmarshal(dAtA []byte) error {
+func (m *ValQC) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1810,10 +1810,10 @@ func (m *PPQC) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: PPQC: wiretype end group for non-group")
+			return fmt.Errorf("proto: ValQC: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: PPQC: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: ValQC: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:

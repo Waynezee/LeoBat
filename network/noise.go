@@ -137,7 +137,7 @@ func (n *NoiseNetWork) Handler(ctx noise.HandlerContext) error {
 }
 
 func (n *NoiseNetWork) OnReceiveMessage(msg *common.Message) {
-	if msg.Type == common.Message_PREPARE || msg.Type == common.Message_READY {
+	if msg.Type == common.Message_BVAL || msg.Type == common.Message_PROM {
 		tmp := &common.Message{
 			Round:  msg.Round,
 			Sender: msg.Sender,

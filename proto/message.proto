@@ -4,9 +4,9 @@ package common;
 message Message {
     enum MsgType {
         PAYLOAD = 0;
-        PP = 1;
-        PREPARE = 2;
-        READY = 3;
+        VAL = 1;
+        BVAL = 2;
+        PROM = 3;
         COIN = 4;
         PAYLOADREQ = 5;
         PAYLOADRESP = 6;
@@ -47,7 +47,7 @@ message Batch {
     repeated  ClientReq reqs = 1;
 }
 
-message PPQC {
+message ValQC {
     bytes strongConnections = 1;
     bytes weakConnections = 2;
     repeated QC strongQCs = 3;

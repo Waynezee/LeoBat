@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"leobat-go/common"
@@ -10,6 +11,7 @@ import (
 	"leobat-go/network"
 	"leobat-go/utils"
 	"sort"
+	"strconv"
 
 	"net"
 	"net/http"
@@ -44,12 +46,10 @@ type Node struct {
 	stop           bool
 	identity       bool // true: byzantine; false: normal
 	proposeRound   uint32
-	oddStuckRound  uint32
-	evenStuckRound uint32
 
 	currRound  uint32
 	readyRound uint32
-	roundState map[uint32]uint8 // 0: before 2f+1 prepare; 1: after 2f+1 prepare
+	roundState map[uint32]uint8 // 0: before 2f+1 bval; 1: after 2f+1 bval
 	execState  map[uint32]executionState
 	nodeState  map[uint32]map[uint8]int                  // 0: 2f+1 nodes not connect; 1: 2f+1 nodes connect
 	roundConn  map[uint32]map[uint32]map[uint32]struct{} // round r+1 -> round r
@@ -59,15 +59,15 @@ type Node struct {
 	hasWeak    map[uint32]map[uint32]struct{}
 
 	// round -> sender -> from -> signature
-	payloads         map[uint32]map[uint32][]byte
-	pps              map[uint32]map[uint32]*common.Message
-	prepares         map[uint32]map[uint32]map[uint32][]byte
-	readys           map[uint32]map[uint32]map[uint32][]byte
-	quorumReady      map[uint32]map[uint32]struct{} // get 2f+1 readys
-	quorumPowerReady map[uint32]map[uint32]struct{} // get 3f+1 readys
-	quorumCoin       map[uint32]map[uint32][]byte
-	coins            map[uint32]uint32
-	coinFlag         map[uint32]bool
+	payloads        map[uint32]map[uint32][]byte
+	vals            map[uint32]map[uint32]*common.Message
+	bvals           map[uint32]map[uint32]map[uint32][]byte
+	proms           map[uint32]map[uint32]map[uint32][]byte
+	quorumProm      map[uint32]map[uint32]struct{} // get 2f+1 proms
+	quorumPowerProm map[uint32]map[uint32]struct{} // get 3f+1 proms
+	quorumCoin      map[uint32]map[uint32][]byte
+	coins           map[uint32]uint32
+	coinFlag        map[uint32]bool
 
 	myBlocks []string                    // my payload hash
 	pendings map[uint32]map[uint32]uint8 // 0: not execute; 1: execute
@@ -113,32 +113,30 @@ func NewNode(cfg *common.Config, peers map[uint32]common.Peer, logger logger.Log
 		stop:           false,
 		identity:       identity,
 		proposeRound:   1,
-		oddStuckRound:  0,
-		evenStuckRound: 0,
 
-		currRound:        1,
-		readyRound:       0,
-		roundState:       make(map[uint32]uint8),
-		execState:        make(map[uint32]executionState),
-		nodeState:        make(map[uint32]map[uint8]int),
-		roundConn:        make(map[uint32]map[uint32]map[uint32]struct{}),
-		connNum:          make(map[uint32]map[uint32]int),
-		weakLink:         make(map[uint32]map[uint32][]common.Vertex),
-		hasWeak:          make(map[uint32]map[uint32]struct{}),
-		payloads:         make(map[uint32]map[uint32][]byte),
-		pps:              make(map[uint32]map[uint32]*common.Message),
-		prepares:         make(map[uint32]map[uint32]map[uint32][]byte),
-		readys:           make(map[uint32]map[uint32]map[uint32][]byte),
-		quorumReady:      make(map[uint32]map[uint32]struct{}),
-		quorumPowerReady: make(map[uint32]map[uint32]struct{}),
-		quorumCoin:       make(map[uint32]map[uint32][]byte),
-		coins:            make(map[uint32]uint32),
-		coinFlag:         make(map[uint32]bool),
-		pendings:         make(map[uint32]map[uint32]uint8),
-		myBlocks:         nil,
-		payload:          "",
-		mergeMsg:         make(map[uint32]map[uint32]common.PayloadIds),
-		sliceNum:         conn,
+		currRound:       1,
+		readyRound:      0,
+		roundState:      make(map[uint32]uint8),
+		execState:       make(map[uint32]executionState),
+		nodeState:       make(map[uint32]map[uint8]int),
+		roundConn:       make(map[uint32]map[uint32]map[uint32]struct{}),
+		connNum:         make(map[uint32]map[uint32]int),
+		weakLink:        make(map[uint32]map[uint32][]common.Vertex),
+		hasWeak:         make(map[uint32]map[uint32]struct{}),
+		payloads:        make(map[uint32]map[uint32][]byte),
+		vals:            make(map[uint32]map[uint32]*common.Message),
+		bvals:           make(map[uint32]map[uint32]map[uint32][]byte),
+		proms:           make(map[uint32]map[uint32]map[uint32][]byte),
+		quorumProm:      make(map[uint32]map[uint32]struct{}),
+		quorumPowerProm: make(map[uint32]map[uint32]struct{}),
+		quorumCoin:      make(map[uint32]map[uint32][]byte),
+		coins:           make(map[uint32]uint32),
+		coinFlag:        make(map[uint32]bool),
+		pendings:        make(map[uint32]map[uint32]uint8),
+		myBlocks:        nil,
+		payload:         "",
+		mergeMsg:        make(map[uint32]map[uint32]common.PayloadIds),
+		sliceNum:        conn,
 
 		msgChan:          make(chan *common.Message, 200000),
 		proposeChan:      make(chan []byte, 10),
@@ -161,6 +159,9 @@ func NewNode(cfg *common.Config, peers map[uint32]common.Peer, logger logger.Log
 		excNum:      0,
 	}
 
+	// node.payload = strings.Repeat("a", cfg.MaxBatchSize*cfg.PayloadSize)
+	// node.logger.Infof("payload size: %v", len(node.payload))
+
 	node.network = network.NewNoiseNetWork(node.cfg.ID, node.cfg.Addr, node.peers, node.msgChan, node.logger, false, 0)
 	for i := uint32(0); i < conn; i++ {
 		node.networkPayList = append(node.networkPayList, network.NewNoiseNetWork(node.cfg.ID, node.cfg.Addr, node.peers, node.msgChan, node.logger, true, i+1))
@@ -170,6 +171,7 @@ func NewNode(cfg *common.Config, peers map[uint32]common.Peer, logger logger.Log
 }
 
 func (n *Node) Run() {
+	//time.Sleep(10 * time.Second)
 	n.startRpcServer()
 	n.network.Start()
 	for _, networkPay := range n.networkPayList {
@@ -198,7 +200,7 @@ func (n *Node) OnStart(msg *common.CoorStart, resp *common.Response) error {
 func (n *Node) Request(req *common.ClientReq, resp *common.ClientResp) error {
 	if req.StartId == 1 {
 		n.interval = int(req.ReqNum)
-		n.logger.Infoln("start test")
+		n.logger.Infoln("start")
 		n.startChan <- struct{}{}
 		n.startProposeChan <- struct{}{}
 	}
@@ -225,6 +227,7 @@ func (n *Node) mainLoop() {
 		case payload := <-n.proposeChan:
 			n.propose(payload)
 		case <-timer.C:
+			// n.Stop()
 			n.StopClient()
 		}
 	}
@@ -251,9 +254,22 @@ func (n *Node) proposeLoop() {
 		case req := <-n.clientChan:
 			n.currBatch.Reqs = append(n.currBatch.Reqs, req)
 			n.reqNum += n.interval
+			// if n.reqNum >= n.cfg.MaxBatchSize {
+			// 	if n.proposeflag {
+			// 		n.getBatch()
+			// 		n.proposeflag = false
+			// 		n.timeflag = false
+			// 	} else {
+			// 		n.timeflag = true
+			// 	}
+			// }
 		case <-n.tryProposeChan:
+			// if n.timeflag {
 			n.getBatch()
 			n.proposeflag = false
+			// } else {
+			// 	n.proposeflag = true
+			// }
 		}
 	}
 }
@@ -290,6 +306,29 @@ func (n *Node) getBatch() {
 	}
 }
 
+func (n *Node) Stop() {
+	conn, err := rpc.DialHTTP("tcp", n.cfg.Coordinator)
+	if err != nil {
+		panic(err)
+	}
+	totalExecutionLatency := uint64(0)
+	for _, l := range n.executionLatencies {
+		totalExecutionLatency += l
+	}
+	st := &common.CoorStatistics{
+		ExecutionNumber: uint64(len(n.executionLatencies)),
+		ID:              n.cfg.ID,
+	}
+	if len(n.executionLatencies) == 0 {
+		st.ExecutionLatency = 0
+	} else {
+		st.ExecutionLatency = totalExecutionLatency / uint64(len(n.executionLatencies))
+	}
+	var resp common.Response
+	conn.Call("Coordinator.Finish", st, &resp)
+	n.logger.Debugln("call back")
+}
+
 func (n *Node) StopClient() {
 	var exeStates []int
 	exeStates = append(exeStates, n.fastPassStates[ODDFAST])
@@ -316,40 +355,40 @@ func (n *Node) propose(payload []byte) {
 	proposal := &common.Message{
 		Round:  round,
 		Sender: n.cfg.ID,
-		Type:   common.Message_PREPARE,
+		Type:   common.Message_BVAL,
 		Hash:   n.myBlocks[len(n.myBlocks)-1],
 	}
 	msgBytes, err := proto.Marshal(proposal)
 	if err != nil {
-		n.logger.Error("marshal prepare failed", err)
+		n.logger.Error("marshal bval failed", err)
 		return
 	}
 	proposal.From = n.cfg.ID
 	proposal.Signature = crypto.Sign(n.cfg.PrivKey, msgBytes)
-	n.addPrepare(round, n.cfg.ID, n.cfg.ID, proposal.Signature, proposal.Hash)
+	n.addBval(round, n.cfg.ID, n.cfg.ID, proposal.Signature, proposal.Hash)
 
-	proposal.Type = common.Message_PP
+	proposal.Type = common.Message_VAL
 	if round > 1 {
-		proposal.Payload = n.getPPQC(round)
+		proposal.Payload = n.getValQC(round)
 	}
 	n.network.BroadcastMessage(proposal)
-	n.logger.Infof("propose pp in round %v", round)
-	if n.pps[round] == nil {
-		n.pps[round] = make(map[uint32]*common.Message)
+	n.logger.Infof("propose val in round %v", round)
+	if n.vals[round] == nil {
+		n.vals[round] = make(map[uint32]*common.Message)
 	}
-	n.pps[round][n.cfg.ID] = proposal
+	n.vals[round][n.cfg.ID] = proposal
 	if n.pendings[round] == nil {
 		n.pendings[round] = make(map[uint32]uint8)
 	}
 	n.pendings[round][n.cfg.ID] = 0
 }
 
-func (n *Node) getPPQC(round uint32) []byte {
+func (n *Node) getValQC(round uint32) []byte {
 	connBytes, err := json.Marshal(n.roundConn[round][n.cfg.ID])
 	if err != nil {
 		panic(err)
 	}
-	ppqc := &common.PPQC{
+	valqc := &common.ValQC{
 		StrongConnections: connBytes,
 		StrongQCs:         make([]*common.QC, len(n.roundConn[round][n.cfg.ID])),
 		WeakQCs:           make([]*common.QC, 0),
@@ -357,28 +396,28 @@ func (n *Node) getPPQC(round uint32) []byte {
 	i := uint32(0)
 	for node := range n.roundConn[round][n.cfg.ID] {
 		var hash string
-		if _, ok := n.pps[round-1][node]; !ok {
-			n.logger.Debugf("not receive PP of %v-%v but used", round-1, node)
+		if _, ok := n.vals[round-1][node]; !ok {
+			n.logger.Debugf("not receive val of %v-%v but used", round-1, node)
 			hash = "badhash"
 		} else {
-			hash = n.pps[round-1][node].Hash
+			hash = n.vals[round-1][node].Hash
 		}
-		prepareqc := &common.QC{
+		bvalqc := &common.QC{
 			Hash:   hash,
 			Sigs:   make([]*common.Signature, n.cfg.N-n.cfg.F),
 			Sender: node,
 		}
 		j := uint32(0)
-		for id, sig := range n.prepares[round-1][node] {
-			prepareqc.Sigs[j] = new(common.Signature)
-			prepareqc.Sigs[j].Id = id
-			prepareqc.Sigs[j].Sig = sig
+		for id, sig := range n.bvals[round-1][node] {
+			bvalqc.Sigs[j] = new(common.Signature)
+			bvalqc.Sigs[j].Id = id
+			bvalqc.Sigs[j].Sig = sig
 			j++
 			if j == n.cfg.N-n.cfg.F {
 				break
 			}
 		}
-		ppqc.StrongQCs[i] = prepareqc
+		valqc.StrongQCs[i] = bvalqc
 		i++
 	}
 	if i < n.cfg.N {
@@ -397,48 +436,48 @@ func (n *Node) getPPQC(round uint32) []byte {
 			s := v.(common.Vertex).Sender
 
 			var hash string
-			if _, ok := n.pps[r][s]; !ok {
-				n.logger.Debugf("not receive pp of %v-%v but weak used", r, s)
+			if _, ok := n.vals[r][s]; !ok {
+				n.logger.Debugf("not receive val of %v-%v but weak used", r, s)
 				hash = "badhash"
 			} else {
-				hash = n.pps[r][s].Hash
+				hash = n.vals[r][s].Hash
 			}
-			prepareqc := &common.QC{
+			bvalqc := &common.QC{
 				Hash:   hash,
 				Sigs:   make([]*common.Signature, n.cfg.N-n.cfg.F),
 				Sender: s,
 			}
 			j := uint32(0)
-			for id, sig := range n.prepares[r][s] {
-				prepareqc.Sigs[j] = new(common.Signature)
-				prepareqc.Sigs[j].Id = id
-				prepareqc.Sigs[j].Sig = sig
+			for id, sig := range n.bvals[r][s] {
+				bvalqc.Sigs[j] = new(common.Signature)
+				bvalqc.Sigs[j].Id = id
+				bvalqc.Sigs[j].Sig = sig
 				j++
 				if j == n.cfg.N-n.cfg.F {
 					break
 				}
 			}
-			ppqc.WeakQCs = append(ppqc.WeakQCs, prepareqc)
+			valqc.WeakQCs = append(valqc.WeakQCs, bvalqc)
 		}
 		weakConnBytes, err := json.Marshal(n.weakLink[round][n.cfg.ID])
 		if err != nil {
 			panic(err)
 		}
-		ppqc.WeakConnections = weakConnBytes
+		valqc.WeakConnections = weakConnBytes
 	}
-	ppqcBytes, err := ppqc.Marshal()
+	valqcBytes, err := valqc.Marshal()
 	if err != nil {
 		panic(err)
 	}
-	return ppqcBytes
+	return valqcBytes
 }
 
-func (n *Node) getSimplePPQC(round uint32) []byte {
+func (n *Node) getValQCSimple(round uint32) []byte {
 	connBytes, err := json.Marshal(n.roundConn[round][n.cfg.ID])
 	if err != nil {
 		panic(err)
 	}
-	ppqc := &common.PPQC{
+	valqc := &common.ValQC{
 		StrongConnections: connBytes,
 	}
 	i := uint32(len(n.roundConn[round][n.cfg.ID]))
@@ -458,16 +497,18 @@ func (n *Node) getSimplePPQC(round uint32) []byte {
 		if err != nil {
 			panic(err)
 		}
-		ppqc.WeakConnections = weakConnBytes
+		valqc.WeakConnections = weakConnBytes
 	}
-	ppqcBytes, err := ppqc.Marshal()
+	valqcBytes, err := valqc.Marshal()
 	if err != nil {
 		panic(err)
 	}
-	return ppqcBytes
+	return valqcBytes
 }
 
 func (n *Node) broadcastPayload(payload []byte) {
+	// payloadStr := n.payload + strconv.Itoa(int(n.currRound)) + "-" + strconv.Itoa(int(n.cfg.ID))
+	// payloadBytes := utils.Str2Bytes(payloadStr)
 	hash := crypto.Hash(payload)
 	n.myBlocks = append(n.myBlocks, hash)
 
@@ -499,6 +540,7 @@ func (n *Node) broadcastPayload(payload []byte) {
 		Hash:    hash,
 		Payload: payload,
 	}
+	// n.logger.Debugf("broadcast payload in round %v", round)
 	n.startTime[round] = uint64(time.Now().UnixNano() / 1000000)
 	msgBytes, _ := proto.Marshal(msg)
 	if n.payloads[round] == nil {
@@ -512,12 +554,14 @@ func (n *Node) handleMessage(msg *common.Message) {
 	switch msg.Type {
 	case common.Message_PAYLOAD:
 		n.onReceivePayload(msg)
-	case common.Message_PP:
-		n.onReceivePP(msg)
-	case common.Message_PREPARE:
-		n.onReceivePrepare(msg)
-	case common.Message_READY:
-		n.onReceiveReady(msg)
+	case common.Message_VAL:
+		n.onReceiveVal(msg)
+	case common.Message_BVAL:
+		n.onReceiveBval(msg)
+	case common.Message_PROM:
+		n.onReceiveProm(msg)
+	case common.Message_COIN:
+		n.onReceiveCoin(msg)
 	case common.Message_PAYLOADREQ:
 		n.onReceivePayloadReq(msg)
 	case common.Message_PAYLOADRESP:
@@ -527,47 +571,48 @@ func (n *Node) handleMessage(msg *common.Message) {
 	}
 }
 
-func (n *Node) onReceivePP(msg *common.Message) {
-	if n.pps[msg.Round] == nil {
-		n.pps[msg.Round] = make(map[uint32]*common.Message)
+func (n *Node) onReceiveVal(msg *common.Message) {
+	if n.vals[msg.Round] == nil {
+		n.vals[msg.Round] = make(map[uint32]*common.Message)
 	}
-	n.pps[msg.Round][msg.Sender] = msg
-	if n.identity && len(n.pps[msg.Round]) >= int(n.cfg.N-n.cfg.F) {
-		if _, ok := n.pps[msg.Round][n.cfg.ID]; !ok {
+	n.vals[msg.Round][msg.Sender] = msg
+	if n.identity && len(n.vals[msg.Round]) >= int(n.cfg.N-n.cfg.F) {
+		if _, ok := n.vals[msg.Round][n.cfg.ID]; !ok {
 			if n.proposeRound < msg.Round {
-				n.logger.Debugf("round %v 2f+1 pps, bad guy propose", msg.Round)
+				n.logger.Debugf("round %v 2f+1 vals, bad guy propose", msg.Round)
 				n.proposeRound = msg.Round
 				n.tryProposeChan <- struct{}{}
 			}
 		}
+
 	}
 	if n.pendings[msg.Round] == nil {
 		n.pendings[msg.Round] = make(map[uint32]uint8)
 	}
 	n.pendings[msg.Round][msg.Sender] = 0
-	n.addPrepare(msg.Round, msg.Sender, msg.From, msg.Signature, msg.Hash)
+	n.addBval(msg.Round, msg.Sender, msg.From, msg.Signature, msg.Hash)
 	if msg.Round > 1 {
-		n.onReceivePPQC(msg.Payload, msg.Sender, msg.Round)
+		n.onReceiveValQC(msg.Payload, msg.Sender, msg.Round)
 	}
 
 	// if msg.Round >= n.currRound {
 	if _, ok := n.payloads[msg.Round][msg.Sender]; ok {
-		if _, ok := n.prepares[msg.Round][msg.Sender][n.cfg.ID]; !ok {
-			votePrepare := &common.Message{
+		if _, ok := n.bvals[msg.Round][msg.Sender][n.cfg.ID]; !ok {
+			voteBval := &common.Message{
 				Round:  msg.Round,
 				Sender: msg.Sender,
-				Type:   common.Message_PREPARE,
+				Type:   common.Message_BVAL,
 				Hash:   msg.Hash,
 			}
-			voteBytes, err := proto.Marshal(votePrepare)
+			voteBytes, err := proto.Marshal(voteBval)
 			if err != nil {
-				n.logger.Error("marshal votePrepare failed", err)
+				n.logger.Error("marshal votebval failed", err)
 				return
 			}
-			votePrepare.From = n.cfg.ID
-			votePrepare.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
-			n.network.BroadcastMessage(votePrepare)
-			n.addPrepare(msg.Round, msg.Sender, n.cfg.ID, votePrepare.Signature, msg.Hash)
+			voteBval.From = n.cfg.ID
+			voteBval.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
+			n.network.BroadcastMessage(voteBval)
+			n.addBval(msg.Round, msg.Sender, n.cfg.ID, voteBval.Signature, msg.Hash)
 		}
 	}
 	// }
@@ -597,6 +642,8 @@ func (n *Node) onReceivePayload(msgSlice *common.Message) {
 			Hash:    msgSlice.Hash,
 			Payload: buffer.Bytes(),
 		}
+		// n.logger.Debugf("receive all payload from %v in round %v", msg.Sender, msg.Round)
+
 		if _, ok := n.payloads[msg.Round][msg.Sender]; ok {
 			return
 		}
@@ -606,52 +653,53 @@ func (n *Node) onReceivePayload(msgSlice *common.Message) {
 		}
 		n.payloads[msg.Round][msg.Sender] = msgBytes
 
-		if _, ok := n.pps[msg.Round][msg.Sender]; ok {
+		if _, ok := n.vals[msg.Round][msg.Sender]; ok {
 			// if msg.Round >= n.currRound {
-			if _, ok := n.prepares[msg.Round][msg.Sender][n.cfg.ID]; !ok {
-				votePrepare := &common.Message{
+			if _, ok := n.bvals[msg.Round][msg.Sender][n.cfg.ID]; !ok {
+				voteBval := &common.Message{
 					Round:  msg.Round,
 					Sender: msg.Sender,
-					Type:   common.Message_PREPARE,
+					Type:   common.Message_BVAL,
 					Hash:   msg.Hash,
 				}
-				voteBytes, err := proto.Marshal(votePrepare)
+				voteBytes, err := proto.Marshal(voteBval)
 				if err != nil {
 					panic(err)
 				}
-				votePrepare.From = n.cfg.ID
-				votePrepare.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
-				n.network.BroadcastMessage(votePrepare)
-				n.addPrepare(msg.Round, msg.Sender, n.cfg.ID, votePrepare.Signature, msg.Hash)
+				voteBval.From = n.cfg.ID
+				voteBval.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
+				n.network.BroadcastMessage(voteBval)
+				n.addBval(msg.Round, msg.Sender, n.cfg.ID, voteBval.Signature, msg.Hash)
 			}
 			// }
 		}
 	}
 }
 
-func (n *Node) onReceivePrepare(msg *common.Message) {
-	n.addPrepare(msg.Round, msg.Sender, msg.From, msg.Signature, msg.Hash)
-	if len(n.prepares[msg.Round][msg.Sender]) == int(n.cfg.F+1) {
-		if _, ok := n.prepares[msg.Round][msg.Sender][n.cfg.ID]; !ok {
+func (n *Node) onReceiveBval(msg *common.Message) {
+	n.addBval(msg.Round, msg.Sender, msg.From, msg.Signature, msg.Hash)
+	if len(n.bvals[msg.Round][msg.Sender]) == int(n.cfg.F+1) {
+		if _, ok := n.bvals[msg.Round][msg.Sender][n.cfg.ID]; !ok {
 			// if msg.Round >= n.currRound {
-			votePrepare := &common.Message{
+			voteBval := &common.Message{
 				Round:  msg.Round,
 				Sender: msg.Sender,
-				Type:   common.Message_PREPARE,
+				Type:   common.Message_BVAL,
 				Hash:   msg.Hash,
 			}
-			voteBytes, err := proto.Marshal(votePrepare)
+			voteBytes, err := proto.Marshal(voteBval)
 			if err != nil {
 				panic(err)
 			}
-			votePrepare.From = n.cfg.ID
-			votePrepare.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
-			n.network.BroadcastMessage(votePrepare)
-			n.addPrepare(msg.Round, msg.Sender, n.cfg.ID, votePrepare.Signature, msg.Hash)
+			voteBval.From = n.cfg.ID
+			voteBval.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
+			n.network.BroadcastMessage(voteBval)
+			n.addBval(msg.Round, msg.Sender, n.cfg.ID, voteBval.Signature, msg.Hash)
 			// }
 		}
 	}
-	// if len(n.prepares[msg.Sender][msg.Timestamp][msg.Hash]) == int(n.cfg.F+1) {
+
+	// if len(n.bvals[msg.Sender][msg.Timestamp][msg.Hash]) == int(n.cfg.F+1) {
 	// 	if _, ok := n.hashToPayloads[msg.Hash]; !ok {
 	// 		req := &common.Message{
 	// 			From: n.cfg.ID,
@@ -663,43 +711,43 @@ func (n *Node) onReceivePrepare(msg *common.Message) {
 	// 	}
 }
 
-func (n *Node) onReceiveReady(msg *common.Message) {
-	n.addReady(msg.Round, msg.Sender, msg.From, msg.Signature)
+func (n *Node) onReceiveProm(msg *common.Message) {
+	n.addProm(msg.Round, msg.Sender, msg.From, msg.Signature)
 	// if msg.Round >= n.currRound {
-	// 	if _, ok := n.readys[msg.Round][msg.Sender][n.cfg.ID]; !ok {
-	// 		n.onReceiveprepareqc(msg)
-	// 		// onReceiveprepareqc -> addPrepare -> sendReady
+	// 	if _, ok := n.proms[msg.Round][msg.Sender][n.cfg.ID]; !ok {
+	// 		n.onReceiveBvalQC(msg)
+	// 		// onReceiveBvalQC -> addBval -> sendProm
 	// 	}
 	// }
 }
 
-func (n *Node) onReceivePPQC(payload []byte, sender uint32, round uint32) {
-	ppqc := new(common.PPQC)
-	err := ppqc.Unmarshal(payload)
+func (n *Node) onReceiveValQC(payload []byte, sender uint32, round uint32) {
+	valqc := new(common.ValQC)
+	err := valqc.Unmarshal(payload)
 	if err != nil {
 		panic(err)
 	}
 	StrongConn := make(map[uint32]struct{})
-	err = json.Unmarshal(ppqc.StrongConnections, &StrongConn)
+	err = json.Unmarshal(valqc.StrongConnections, &StrongConn)
 	if err != nil {
-		n.logger.Error("unmarshal conn in ppqc failed", err)
+		n.logger.Error("unmarshal conn in valqc failed", err)
 		return
 	}
-	for _, qc := range ppqc.StrongQCs {
-		if len(n.prepares[round-1][qc.Sender]) < int(n.cfg.N-n.cfg.F) {
+	for _, qc := range valqc.StrongQCs {
+		if len(n.bvals[round-1][qc.Sender]) < int(n.cfg.N-n.cfg.F) {
 			var hash string
 			if qc.Hash == "badhash" {
-				if _, ok := n.pps[round-1][qc.Sender]; !ok {
+				if _, ok := n.vals[round-1][qc.Sender]; !ok {
 					n.logger.Debugf("badhash of %v-%v", round-1, qc.Sender)
 					continue
 				} else {
-					hash = n.pps[round-1][qc.Sender].Hash
+					hash = n.vals[round-1][qc.Sender].Hash
 				}
 			}
 			tmp := &common.Message{
 				Round:  round - 1,
 				Sender: qc.Sender,
-				Type:   common.Message_PREPARE,
+				Type:   common.Message_BVAL,
 				Hash:   hash,
 			}
 			data, err := tmp.Marshal()
@@ -708,11 +756,11 @@ func (n *Node) onReceivePPQC(payload []byte, sender uint32, round uint32) {
 			}
 			for _, sig := range qc.Sigs {
 				if !crypto.Verify(n.peers[sig.Id].PublicKey, data, sig.Sig) {
-					n.logger.Error("invalid prepare signature in pp qc", err)
+					n.logger.Error("invalid bval signature in val qc", err)
 					continue
 				}
-				n.addPrepare(round-1, qc.Sender, sig.Id, sig.Sig, hash)
-				if len(n.prepares[round-1][qc.Sender]) >= int(n.cfg.N-n.cfg.F) {
+				n.addBval(round-1, qc.Sender, sig.Id, sig.Sig, hash)
+				if len(n.bvals[round-1][qc.Sender]) >= int(n.cfg.N-n.cfg.F) {
 					break
 				}
 			}
@@ -722,11 +770,11 @@ func (n *Node) onReceivePPQC(payload []byte, sender uint32, round uint32) {
 		n.roundConn[round] = make(map[uint32]map[uint32]struct{})
 	}
 	n.roundConn[round][sender] = StrongConn
-	if len(ppqc.WeakQCs) != 0 {
+	if len(valqc.WeakQCs) != 0 {
 		weakConn := make([]common.Vertex, 0)
-		err = json.Unmarshal(ppqc.WeakConnections, &weakConn)
+		err = json.Unmarshal(valqc.WeakConnections, &weakConn)
 		if err != nil {
-			n.logger.Error("unmarshal conn in ppqc failed", err)
+			n.logger.Error("unmarshal conn in valqc failed", err)
 			return
 		}
 		if n.weakLink[round] == nil {
@@ -736,10 +784,13 @@ func (n *Node) onReceivePPQC(payload []byte, sender uint32, round uint32) {
 			n.weakLink[round][sender] = make([]common.Vertex, 0)
 		}
 		n.weakLink[round][sender] = weakConn
+		// n.logger.Debugf("%v-%v has %v weak link", round, sender, len(valqc.WeakQCs))
 	}
+	// n.logger.Debugf("%v-%v connect %v", round, sender, conn)
 }
 
-func (n *Node) onReceiveprepareqc(msg *common.Message) {
+func (n *Node) onReceiveBvalQC(msg *common.Message) {
+	// n.logger.Debugf("receiveBvalQC %v-%v from %v", msg.Round, msg.Sender, msg.From)
 	qc := new(common.QC)
 	err := qc.Unmarshal(msg.Payload)
 	if err != nil {
@@ -748,7 +799,7 @@ func (n *Node) onReceiveprepareqc(msg *common.Message) {
 	tmp := &common.Message{
 		Round:  msg.Round,
 		Sender: msg.Sender,
-		Type:   common.Message_PREPARE,
+		Type:   common.Message_BVAL,
 		Hash:   qc.Hash,
 	}
 	data, err := tmp.Marshal()
@@ -757,12 +808,35 @@ func (n *Node) onReceiveprepareqc(msg *common.Message) {
 	}
 	for _, sig := range qc.Sigs {
 		if !crypto.Verify(n.peers[sig.Id].PublicKey, data, sig.Sig) {
-			n.logger.Error("invalid prepare signature in prepare qc", err)
+			n.logger.Error("invalid bval signature in bval qc", err)
 			return
 		}
-		n.addPrepare(msg.Round, msg.Sender, sig.Id, sig.Sig, qc.Hash)
-		if _, ok := n.readys[msg.Round][msg.Sender][n.cfg.ID]; ok {
+		n.addBval(msg.Round, msg.Sender, sig.Id, sig.Sig, qc.Hash)
+		if _, ok := n.proms[msg.Round][msg.Sender][n.cfg.ID]; ok {
 			break
+		}
+	}
+}
+
+func (n *Node) onReceiveCoin(msg *common.Message) {
+	if n.quorumCoin[msg.Round] == nil {
+		n.quorumCoin[msg.Round] = make(map[uint32][]byte)
+	}
+	n.quorumCoin[msg.Round][msg.From] = msg.Payload
+	if len(n.quorumCoin[msg.Round]) >= int(n.cfg.N-n.cfg.F) {
+		if _, ok := n.coins[msg.Round]; !ok {
+			coinBytes := crypto.Recover(n.quorumCoin[msg.Round])
+			leader := binary.LittleEndian.Uint32(coinBytes)%uint32(n.cfg.N) + 1
+			n.coins[msg.Round] = leader
+			// n.logger.Debugf("round %v coin is %v", msg.Round, leader)
+			if n.connNum[msg.Round][leader] >= int(n.cfg.F+1) {
+				n.logger.Debugf("good coin %v in round %v", leader, msg.Round)
+				n.coinFlag[msg.Round] = true
+				n.tryCoinPass(msg.Round)
+			} else {
+				n.logger.Debugf("bad coin %v in round %v", leader, msg.Round)
+				n.badCoin++
+			}
 		}
 	}
 }
@@ -815,32 +889,14 @@ func (n *Node) weakExc(round uint32, sender uint32) {
 }
 
 func (n *Node) allRoundExc(round uint32) {
+	//TODO: should check payload
 	if n.execState[round] == FINISH || n.execState[round] == LEFT {
 		return
 	}
 	if n.readyRound != round-1 {
-		if n.readyRound%2 == round%2 {
-			n.logger.Debugf("round %v allExc but readyRound is %v, just wait", round, n.readyRound)
-			if round%2 == 0 {
-				n.evenStuckRound = round
-			} else {
-				n.oddStuckRound = round
-			}
-			return
-		} else {
-			var nodes []uint32
-			for i := uint32(1); i <= n.cfg.N; i++ {
-				nodes = append(nodes, i)
-			}
-			n.logger.Debugf("round %v allExc and excuteBack", round)
-			n.excuteBackFastPath(round-2, nodes)
-		}
-	}
-
-	if n.readyRound != round-1 || n.execState[round] == FINISH || n.execState[round] == LEFT {
+		n.logger.Debugf("round %v allExc but readyRound is %v", round, n.readyRound)
 		return
 	}
-
 	n.logger.Debugf("all execute round %v", round)
 	n.readyRound = round
 	n.execState[round] = FINISH
@@ -859,6 +915,7 @@ func (n *Node) allRoundExc(round uint32) {
 		for node, state := range n.pendings[round-1] {
 			if state == 0 {
 				if n.connNum[round-1][node] > 0 {
+					// n.logger.Infof("%v-%v execute in round %v", round, node, n.currRound)
 					n.pendings[round-1][node] = 1
 					if _, ok1 := n.weakLink[round-1][node]; ok1 {
 						n.weakExc(round-1, node)
@@ -873,7 +930,7 @@ func (n *Node) allRoundExc(round uint32) {
 			}
 		}
 		if len(nodes) > 0 {
-			n.excuteBackLeft(round-2, nodes)
+			n.excuteBack(round-2, nodes)
 		}
 	}
 	if n.execState[round+1] == ALL_ONE {
@@ -889,32 +946,12 @@ func (n *Node) partRoundExc(round uint32) {
 		return
 	}
 	if n.readyRound != round-1 {
-		if n.readyRound%2 == round%2 {
-			n.logger.Debugf("round %v partExc but readyRound is %v, just wait", round, n.readyRound)
-			if round%2 == 0 {
-				n.evenStuckRound = round
-			} else {
-				n.oddStuckRound = round
-			}
-			return
-		} else {
-			var nodes []uint32
-			for i := uint32(1); i <= n.cfg.N; i++ {
-				if n.connNum[round][i] >= int(n.cfg.N-n.cfg.F) {
-					nodes = append(nodes, i)
-				}
-			}
-			n.logger.Debugf("round %v partExc and excuteBack", round)
-			n.excuteBackFastPath(round-2, nodes)
-		}
-	}
-
-	if n.readyRound != round-1 || n.execState[round] == FINISH || n.execState[round] == LEFT {
+		n.logger.Debugf("round %v partExc but readyRound is %v", round, n.readyRound)
 		return
 	}
-
 	n.logger.Debugf("part execute round %v", round)
 	n.readyRound = round
+
 	var nodes []uint32
 	n.execState[round] = FINISH
 	for node, state := range n.pendings[round] {
@@ -935,7 +972,7 @@ func (n *Node) partRoundExc(round uint32) {
 		}
 	}
 	if len(nodes) > 0 {
-		n.excuteBackLeft(round-1, nodes)
+		n.excuteBack(round-1, nodes)
 	}
 
 	if n.execState[round+1] == ALL_ONE {
@@ -963,6 +1000,57 @@ func (n *Node) fastPass(round uint32) {
 	}
 }
 
+func (n *Node) coinPass(coinRound uint32) {
+	if coinRound <= 2 {
+		return
+	}
+	if n.execState[coinRound-2] == FINISH || n.execState[coinRound-2] == LEFT || !n.coinFlag[coinRound] {
+		return
+	}
+	n.logger.Debugf("round %v coin pass", coinRound-2)
+	n.readyRound = coinRound - 2
+
+	leader := n.coins[coinRound]
+	quorumVote := make(map[uint32]int)
+	if len(n.roundConn[coinRound][leader]) == int(n.cfg.N) {
+		quorumVote = n.connNum[coinRound-2]
+	} else {
+		for father := range n.roundConn[coinRound][leader] {
+			for child := range n.roundConn[coinRound-1][father] {
+				quorumVote[child]++
+			}
+		}
+	}
+	var nodes []uint32
+	n.execState[coinRound-2] = FINISH
+	for node, state := range n.pendings[coinRound-2] {
+		if state == 0 {
+			if quorumVote[node] >= int(n.cfg.F+1) {
+				// n.logger.Infof("%v-%v execute in round %v", coinRound-2, node, n.currRound)
+				n.pendings[coinRound-2][node] = 1
+				if _, ok1 := n.weakLink[coinRound-2][node]; ok1 {
+					n.weakExc(coinRound-2, node)
+				}
+				nodes = append(nodes, node)
+				if node == n.cfg.ID {
+					n.blockBack(coinRound - 2)
+				}
+			} else {
+				n.execState[coinRound-2] = LEFT
+			}
+		}
+	}
+	if len(nodes) > 0 {
+		n.excuteBack(coinRound-3, nodes)
+	}
+	if n.execState[coinRound-1] == ALL_ONE {
+		n.allRoundExc(coinRound - 1)
+	}
+	if n.execState[coinRound-1] == ALL_HALF {
+		n.partRoundExc(coinRound - 1)
+	}
+}
+
 func (n *Node) blockBack(round uint32) {
 	latency := uint64(time.Now().UnixNano()/1000000) - n.startTime[round]
 	n.executionLatencies[round] = latency
@@ -977,87 +1065,7 @@ func (n *Node) blockBack(round uint32) {
 	n.connection.Call("Client.NodeFinish", st, &resp)
 }
 
-func (n *Node) excuteBackFastPath(round uint32, fatherNodes []uint32) {
-	if round <= 0 || round <= n.readyRound || n.execState[round] == FINISH || n.execState[round] == LEFT {
-		return
-	}
-	witness := make(map[uint32]int)
-	for _, father := range fatherNodes {
-		for child := range n.roundConn[round+2][father] {
-			witness[child]++
-		}
-	}
-	quorumVote := make(map[uint32]int)
-	for w := range witness {
-		for candidate := range n.roundConn[round+1][w] {
-			quorumVote[candidate]++
-		}
-	}
-
-	if n.readyRound != round-1 {
-		var nodes []uint32
-		for node, votes := range quorumVote {
-			if votes >= int(n.cfg.F+1) {
-				nodes = append(nodes, node)
-			}
-		}
-		n.excuteBackFastPath(round-2, nodes)
-	}
-
-	if n.readyRound != round-1 || n.execState[round] == FINISH || n.execState[round] == LEFT {
-		return
-	}
-
-	var nodes []uint32
-	n.execState[round] = FINISH
-	n.readyRound = round
-	n.logger.Debugf("round %v back execute", round)
-	for node, state := range n.pendings[round] {
-		if state == 0 {
-			if quorumVote[node] >= int(n.cfg.F+1) {
-				n.pendings[round][node] = 1
-				if _, ok1 := n.weakLink[round][node]; ok1 {
-					n.weakExc(round, node)
-				}
-				nodes = append(nodes, node)
-				if node == n.cfg.ID {
-					n.blockBack(round)
-				}
-			} else {
-				n.execState[round] = LEFT
-			}
-		}
-	}
-	if len(nodes) > 0 {
-		n.excuteBackLeft(round-1, nodes)
-	}
-	if n.execState[round+1] == ALL_ONE {
-		n.allRoundExc(round + 1)
-	}
-	if n.execState[round+1] == ALL_HALF {
-		n.partRoundExc(round + 1)
-	}
-	if n.execState[round+1] == PENGING {
-		if (round+1)%2 != 0 && round+1 < n.oddStuckRound {
-			if n.execState[n.oddStuckRound] == ALL_ONE {
-				n.allRoundExc(n.oddStuckRound)
-			}
-			if n.execState[round+1] == ALL_HALF {
-				n.partRoundExc(n.oddStuckRound)
-			}
-		}
-		if (round+1)%2 == 0 && round+1 < n.evenStuckRound {
-			if n.execState[n.evenStuckRound] == ALL_ONE {
-				n.allRoundExc(n.evenStuckRound)
-			}
-			if n.execState[n.evenStuckRound] == ALL_HALF {
-				n.partRoundExc(n.evenStuckRound)
-			}
-		}
-	}
-}
-
-func (n *Node) excuteBackLeft(round uint32, fatherNodes []uint32) {
+func (n *Node) excuteBack(round uint32, fatherNodes []uint32) {
 	if round <= 0 || n.execState[round] != LEFT {
 		return
 	}
@@ -1072,6 +1080,7 @@ func (n *Node) excuteBackLeft(round uint32, fatherNodes []uint32) {
 	for node, state := range n.pendings[round] {
 		if state == 0 {
 			if quorumVote[node] > 0 {
+				// n.logger.Infof("%v-%v execute in round %v", coinRound-2, node, n.currRound)
 				n.pendings[round][node] = 1
 				if _, ok1 := n.weakLink[round][node]; ok1 {
 					n.weakExc(round, node)
@@ -1087,7 +1096,68 @@ func (n *Node) excuteBackLeft(round uint32, fatherNodes []uint32) {
 	}
 	if len(nodes) > 0 {
 		n.logger.Debugf("round %v excuteBack %v blocks", round, len(nodes))
-		n.excuteBackLeft(round-1, nodes)
+		n.excuteBack(round-1, nodes)
+	}
+}
+
+func (n *Node) tryCoinPass(round uint32) {
+	if round <= 2 {
+		return
+	}
+	preRound := round - 2
+	for {
+		if preRound <= 2 || n.coinFlag[preRound] {
+			break
+		}
+		candidate := n.coins[preRound]
+		for father := range n.roundConn[preRound+2][n.coins[preRound+2]] {
+			if _, ok := n.roundConn[preRound+1][father][candidate]; ok {
+				n.logger.Debugf("round %v leader %v saved by round %v leader %v", preRound, candidate, preRound+2, n.coins[preRound+2])
+				n.coinFlag[preRound] = true
+				break
+			}
+		}
+		preRound -= 2
+	}
+	if n.readyRound >= round-2 {
+		return
+	}
+	if n.readyRound == round-3 {
+		n.coinPass(round)
+	} else {
+		if n.readyRound%2 == round%2 {
+			// brother round coin stuck
+			n.logger.Debugf("now coin is round %v, ready execute stuck in round %v", round, n.readyRound)
+			return
+		} else {
+			for {
+				executeRound := n.readyRound + 1
+				if executeRound > round-2 {
+					break
+				}
+				if n.coinFlag[executeRound+2] {
+					n.coinPass(executeRound + 2)
+				} else {
+					// futureLeader := executeRound + 4
+					// for {
+					// 	if n.coinFlag[futureLeader] {
+					// 		break
+					// 	}
+					// 	futureLeader += 2
+					// }
+					//TODO: get vertices in executeRound+1 that has path to futureLeader
+					for i := uint32(1); i <= n.cfg.N; i++ {
+						if n.connNum[executeRound+2][i] >= int(n.cfg.F+1) {
+							n.logger.Debugf("virtual coin %v in round %v", i, executeRound+2)
+							n.coinFlag[executeRound+2] = true
+							n.coins[executeRound+2] = i
+							n.coinPass(executeRound + 2)
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -1106,7 +1176,7 @@ func (n *Node) checkConn(round uint32, sender uint32) {
 				n.nodeState[round][1]++
 			}
 		} else {
-			if (len(n.pps[round+1]) - n.connNum[round][i]) == int(n.cfg.N-n.cfg.F) {
+			if (len(n.vals[round+1]) - n.connNum[round][i]) == int(n.cfg.N-n.cfg.F) {
 				n.nodeState[round][0]++
 			}
 		}
@@ -1122,37 +1192,52 @@ func (n *Node) checkConn(round uint32, sender uint32) {
 		}
 		n.fastPass(round)
 	}
+	if !n.coinFlag[round] {
+		n.checkCoin(round)
+	}
 }
 
-func (n *Node) addPrepare(round uint32, sender uint32, from uint32, signature []byte, hash string) {
-	if n.prepares[round] == nil {
-		n.prepares[round] = make(map[uint32]map[uint32][]byte)
+func (n *Node) checkCoin(round uint32) {
+	if round <= 2 {
+		return
 	}
-	if n.prepares[round][sender] == nil {
-		n.prepares[round][sender] = map[uint32][]byte{}
+	if n.connNum[round][n.coins[round]] >= int(n.cfg.F+1) {
+		n.logger.Debugf("round %v coin turn good", round)
+		n.coinFlag[round] = true
+		n.tryCoinPass(round)
 	}
-	n.prepares[round][sender][from] = signature
+}
 
-	if len(n.prepares[round][sender]) >= int(n.cfg.N-n.cfg.F) {
-		if _, ok := n.readys[round][sender][n.cfg.ID]; !ok {
+func (n *Node) addBval(round uint32, sender uint32, from uint32, signature []byte, hash string) {
+	if n.bvals[round] == nil {
+		n.bvals[round] = make(map[uint32]map[uint32][]byte)
+	}
+	if n.bvals[round][sender] == nil {
+		n.bvals[round][sender] = map[uint32][]byte{}
+	}
+	n.bvals[round][sender][from] = signature
+
+	if len(n.bvals[round][sender]) >= int(n.cfg.N-n.cfg.F) {
+		if _, ok := n.proms[round][sender][n.cfg.ID]; !ok {
+			// n.logger.Debugf("%v-%v quorumBval", round, sender)
 			if round >= n.currRound {
-				// payload := n.getprepareqc(round, sender, hash)
-				voteReady := &common.Message{
+				// payload := n.getBvalQC(round, sender, hash)
+				voteProm := &common.Message{
 					Round:  round,
 					Sender: sender,
-					Type:   common.Message_READY,
+					Type:   common.Message_PROM,
 					Hash:   hash,
 				}
-				voteBytes, err := proto.Marshal(voteReady)
+				voteBytes, err := proto.Marshal(voteProm)
 				if err != nil {
 					panic(err)
 				}
-				voteReady.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
-				voteReady.From = n.cfg.ID
-				// voteReady.Payload = payload
-				n.network.BroadcastMessage(voteReady)
-				n.addReady(round, sender, n.cfg.ID, voteReady.Signature)
-				if sender == n.cfg.ID && round == n.currRound && len(n.quorumReady[round]) >= int(n.cfg.N-n.cfg.F) {
+				voteProm.Signature = crypto.Sign(n.cfg.PrivKey, voteBytes)
+				voteProm.From = n.cfg.ID
+				// voteProm.Payload = payload
+				n.network.BroadcastMessage(voteProm)
+				n.addProm(round, sender, n.cfg.ID, voteProm.Signature)
+				if sender == n.cfg.ID && round == n.currRound && len(n.quorumProm[round]) >= int(n.cfg.N-n.cfg.F) {
 					n.newRound(round + 1)
 				}
 			} else {
@@ -1173,20 +1258,20 @@ func (n *Node) addPrepare(round uint32, sender uint32, from uint32, signature []
 	}
 }
 
-func (n *Node) addReady(round uint32, sender uint32, from uint32, signature []byte) {
-	if n.readys[round] == nil {
-		n.readys[round] = make(map[uint32]map[uint32][]byte)
+func (n *Node) addProm(round uint32, sender uint32, from uint32, signature []byte) {
+	if n.proms[round] == nil {
+		n.proms[round] = make(map[uint32]map[uint32][]byte)
 	}
-	if n.readys[round][sender] == nil {
-		n.readys[round][sender] = map[uint32][]byte{}
+	if n.proms[round][sender] == nil {
+		n.proms[round][sender] = map[uint32][]byte{}
 	}
-	n.readys[round][sender][from] = signature
+	n.proms[round][sender][from] = signature
 
-	if len(n.readys[round][sender]) >= int(n.cfg.N-n.cfg.F) {
-		if n.quorumReady[round] == nil {
-			n.quorumReady[round] = make(map[uint32]struct{})
+	if len(n.proms[round][sender]) >= int(n.cfg.N-n.cfg.F) {
+		if n.quorumProm[round] == nil {
+			n.quorumProm[round] = make(map[uint32]struct{})
 		}
-		n.quorumReady[round][sender] = struct{}{}
+		n.quorumProm[round][sender] = struct{}{}
 		if n.roundConn[round+1] == nil {
 			n.roundConn[round+1] = make(map[uint32]map[uint32]struct{})
 		}
@@ -1194,7 +1279,7 @@ func (n *Node) addReady(round uint32, sender uint32, from uint32, signature []by
 			n.roundConn[round+1][n.cfg.ID] = make(map[uint32]struct{})
 		}
 		n.roundConn[round+1][n.cfg.ID][sender] = struct{}{}
-		if round >= n.currRound && len(n.quorumReady[round]) >= int(n.cfg.N-n.cfg.F) && len(n.prepares[n.currRound][n.cfg.ID]) >= int(n.cfg.N-n.cfg.F) {
+		if round >= n.currRound && len(n.quorumProm[round]) >= int(n.cfg.N-n.cfg.F) && len(n.bvals[n.currRound][n.cfg.ID]) >= int(n.cfg.N-n.cfg.F) {
 			if round > n.currRound {
 				v := common.Vertex{
 					Round:  n.currRound,
@@ -1206,12 +1291,12 @@ func (n *Node) addReady(round uint32, sender uint32, from uint32, signature []by
 		}
 	}
 
-	if len(n.readys[round][sender]) == int(n.cfg.N) {
-		if n.quorumPowerReady[round] == nil {
-			n.quorumPowerReady[round] = make(map[uint32]struct{})
+	if len(n.proms[round][sender]) == int(n.cfg.N) {
+		if n.quorumPowerProm[round] == nil {
+			n.quorumPowerProm[round] = make(map[uint32]struct{})
 		}
-		n.quorumPowerReady[round][sender] = struct{}{}
-		if len(n.quorumPowerReady[round]) == int(n.cfg.N) && n.execState[round] != FINISH {
+		n.quorumPowerProm[round][sender] = struct{}{}
+		if len(n.quorumPowerProm[round]) == int(n.cfg.N) && n.execState[round] != FINISH {
 			n.logger.Debugf("round %v FAST_FAST", round)
 			n.fastPassStates[FAST_FAST]++
 			n.execState[round] = ALL_ONE
@@ -1231,17 +1316,18 @@ func (n *Node) addReady(round uint32, sender uint32, from uint32, signature []by
 			n.logger.Debugf("round %v turn state", round)
 			n.roundState[round] = 1
 			n.getConnNum(round - 1)
+			n.getCoin(round - 1)
 		}
 	}
 }
 
-func (n *Node) getprepareqc(round uint32, sender uint32, hash string) []byte {
+func (n *Node) getBvalQC(round uint32, sender uint32, hash string) []byte {
 	qc := &common.QC{
 		Hash: hash,
 		Sigs: make([]*common.Signature, n.cfg.N-n.cfg.F),
 	}
 	i := uint32(0)
-	for id, sig := range n.prepares[round][sender] {
+	for id, sig := range n.bvals[round][sender] {
 		qc.Sigs[i] = new(common.Signature)
 		qc.Sigs[i].Id = id
 		qc.Sigs[i].Sig = sig
@@ -1255,6 +1341,39 @@ func (n *Node) getprepareqc(round uint32, sender uint32, hash string) []byte {
 		panic(err)
 	}
 	return qcBytes
+}
+
+func (n *Node) getCoin(round uint32) {
+	if round <= 2 {
+		return
+	}
+	data := n.getCoinData(round)
+	sigShare := crypto.BlsSign(data, n.cfg.ThresholdSK)
+	msg := &common.Message{
+		Round:   round,
+		From:    n.cfg.ID,
+		Type:    common.Message_COIN,
+		Payload: sigShare,
+	}
+	n.network.BroadcastMessage(msg)
+	n.onReceiveCoin(msg)
+}
+
+func (n *Node) getCoinData(round uint32) []byte {
+	if _, ok := n.quorumCoin[round][n.cfg.ID]; ok {
+		return n.quorumCoin[round][n.cfg.ID]
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString(strconv.FormatUint(uint64(round), 10))
+	buffer.WriteString("-")
+	buffer.WriteString(string(n.cfg.MasterPK))
+	buffer.WriteString("-")
+	buffer.WriteString(strconv.FormatUint(uint64(time.Now().Day()), 10))
+	if n.quorumCoin[round] == nil {
+		n.quorumCoin[round] = make(map[uint32][]byte)
+	}
+	n.quorumCoin[round][n.cfg.ID] = buffer.Bytes()
+	return n.quorumCoin[round][n.cfg.ID]
 }
 
 func (n *Node) getConnNum(round uint32) {
@@ -1271,7 +1390,7 @@ func (n *Node) getConnNum(round uint32) {
 	for i := uint32(1); i <= n.cfg.N; i++ {
 		if n.connNum[round][i] >= int(n.cfg.N-n.cfg.F) {
 			n.nodeState[round][1]++
-		} else if (len(n.pps[round+1]) - n.connNum[round][i]) >= int(n.cfg.N-n.cfg.F) {
+		} else if (len(n.vals[round+1]) - n.connNum[round][i]) >= int(n.cfg.N-n.cfg.F) {
 			n.nodeState[round][0]++
 		}
 	}

@@ -105,6 +105,7 @@ func main() {
 	coor.total = len(nodes)
 	for _, node := range nodes {
 		go func(n string) {
+			// fmt.Printf("notify %v\n", node)
 			cli, err := rpc.DialHTTP("tcp", n)
 			if err != nil {
 				panic(err)
@@ -124,9 +125,25 @@ func main() {
 		case <-coor.stop:
 			fmt.Printf("execution average latency: %+v\n", coor.executionLatency)
 			fmt.Printf("execution 95 latency: %+v\n", coor.executionLatency95)
+			fmt.Printf("finish block number: %+v\n", coor.consensusNumber)
+			// fmt.Printf("execution req number: %+v\n", coor.executionNumber)
+			fmt.Printf("produce round number: %+v\n", coor.produceRound)
+			// fmt.Printf("zero number: %+v\n", coor.zeroNum)
+			fmt.Printf("bad coin number: %+v\n", coor.badCoin)
+			fmt.Printf("total finished block number: %+v\n", coor.totalConsensusNum)
+			fmt.Printf("total executed req number: %+v\n", coor.totalExecutionNum)
 			fmt.Printf("total full-execution latency: %+v\n", coor.totalExecutionLatency/coor.totalExecutionNum)
 			fmt.Printf("total full-execution throughput: %+v\n", coor.totalExecutionNum/uint64(coor.testTime))
 			fmt.Printf("-------------------------------------------\n")
+
+			// for i := 0; i < 5; i++ {
+			// 	sum := uint64(0)
+			// 	for j := 1; j < 21; j++ {
+			// 		sum += coor.latency[uint32(20*i+j)]
+			// 	}
+			// 	fmt.Printf("region %+v latency: %+v\n", i+1, sum/20)
+			// }
+
 			return
 		}
 	}
@@ -151,11 +168,13 @@ func (c *Coordinator) Finish(req *common.CoorStatistics, resp *common.Response) 
 	} else {
 		c.executionLatency[req.ID] = req.ExecutionLatency / req.ExecutionNumber
 	}
+	// c.zeroNum[req.ID] = req.Zero
 	c.badCoin[req.ID] = req.BadCoin
 	c.curr++
 	c.totalConsensusNum += req.ConsensusNumber
 	c.totalExecutionNum += req.ExecutionNumber
 	c.totalExecutionLatency += req.ExecutionLatency
+	// fmt.Printf("node %+v latency: %+v\n", req.ID, req.LatencyMap)
 	fmt.Printf("node %+v execution states: %+v (oddfast-evenfast-oddpending-evenpending)\n", req.ID, req.States)
 	c.produceRound[req.ID] = req.Zero
 	if len(req.LatencyMap) != 0 {

@@ -16,7 +16,7 @@ clients["nodes"] = []
 coordinator = {}
 server_id = 1
 client_id = 1
-num = int(sys.argv[3])
+num = int(sys.argv[1])
 for region in regions:
     if num <= 0:
         break
@@ -25,7 +25,7 @@ for region in regions:
     Filter = [
         {
             'Name': 'tag:Name',
-            'Values': [sys.argv[1],]  # test instances name
+            'Values': ["cf",]  # test instances name
         },
         {
             'Name': 'instance-state-name',
@@ -62,7 +62,7 @@ with open(file,"w") as f:
     json.dump(total,f,indent=2)
 
 coorEc2 = boto3.client('ec2',aws_access_key_id=access_key, aws_secret_access_key=secret_key,region_name="us-east-2")
-coorResponse = coorEc2.describe_instances(Filters=[{'Name':'tag:Name','Values': [sys.argv[2],]}])  # develop instance name
+coorResponse = coorEc2.describe_instances(Filters=[{'Name':'tag:Name','Values': ["leobat",]}])  # develop instance name
 coordinator['private'] = coorResponse['Reservations'][0]['Instances'][0]['PrivateIpAddress']
 coordinator['public'] = coorResponse['Reservations'][0]['Instances'][0]['PublicIpAddress']
 file = "devip.json"

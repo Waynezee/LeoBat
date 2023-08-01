@@ -1,5 +1,27 @@
 # LeoBat
 
+## local test
+
+```
+cd leobat-go
+cat conf/single/nodes > conf/nodes.txt
+mkdir -p log
+go build -o leobat
+./leobat -c conf/single/node1.json -n 1 > log/node1.log 2>&1
+./leobat -c conf/single/node2.json -n 1 > log/node2.log 2>&1
+./leobat -c conf/single/node3.json -n 1 > log/node3.log 2>&1
+./leobat -c conf/single/node4.json -n 1 > log/node4.log 2>&1
+cd client
+go build -o client
+./client 127.0.0.1:7001 127.0.0.1:6001
+./client 127.0.0.1:7002 127.0.0.1:6002
+./client 127.0.0.1:7003 127.0.0.1:6003
+./client 127.0.0.1:7004 127.0.0.1:6004
+cd coordinator
+go build -o coor
+./coor -b 1000 -p 1 -t 10 -i 20 | tee -a result.txt
+```
+
 ## WAN test
 
 ```
@@ -29,6 +51,7 @@ coordinator --> client 6000+
 client --> node 7000+  
 node --> node 5000+  
 node --> coordinator 9000  
+
 
 ## crash && byzantine test mode
 
