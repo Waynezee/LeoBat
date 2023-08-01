@@ -1,5 +1,5 @@
 # LeoBat
-
+This repo provides an implementation of LeoBat-lite, one of an asynchronous and leaderless Byzantine fault tolerance protocol based on the directed acyclic graph (DAG) structure. LeoBat-lite is a member of LeoBat protocol family, which uses a network fair scheduler to guarantee liveness and can achieve fast termination when the fast path is satisfied.
 ## WAN test
 
 ```
