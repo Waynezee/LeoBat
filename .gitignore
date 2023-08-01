@@ -1,0 +1,8 @@
+.idea/
+leobat
+coordinator/coor
+test/script/create
+client/client
+*.txt
+*.json
+*.log

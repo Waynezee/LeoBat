@@ -1,0 +1,57 @@
+syntax = "proto3";
+package common;
+
+message Message {
+    enum MsgType {
+        PAYLOAD = 0;
+        PP = 1;
+        PREPARE = 2;
+        READY = 3;
+        COIN = 4;
+        PAYLOADREQ = 5;
+        PAYLOADRESP = 6;
+    }
+    uint32 from = 1;      // who deliver the msg
+    uint32 round = 2;
+    uint32 sender = 3;    // who origin send the msg
+    MsgType type = 4;
+    string hash = 5;
+    bytes signature = 6;
+    bytes payload = 7;
+    uint32 totalPayloadNum = 8;
+    uint32 payloadSlice = 9;
+}
+
+message Signature {
+    bytes sig = 1;
+    uint32 id = 2;
+}
+
+message QC {
+    string hash = 1;
+    repeated Signature sigs = 2;
+    uint32 sender = 3;
+}
+
+message ClientReq {
+    int32 startId = 1;
+    int32 reqNum = 2;
+    bytes payload = 3;
+}
+
+message ClientResp {
+
+}
+
+message Batch {
+    repeated  ClientReq reqs = 1;
+}
+
+message PPQC {
+    bytes strongConnections = 1;
+    bytes weakConnections = 2;
+    repeated QC strongQCs = 3;
+    repeated QC weakQCs = 4;
+}
+
+// protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/gogo/protobuf/protobuf --gogofaster_out=../common message.proto
