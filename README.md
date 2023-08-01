@@ -1,5 +1,5 @@
 # LeoBat
-
+This repo provides an implementation of LeoBat-coin, one of an asynchronous and leaderless Byzantine fault tolerance protocol based on the directed acyclic graph (DAG) structure. LeoBat-coin is a member of LeoBat protocol family, which uses Common Coin to guarantee liveness and can achieve fast termination when the fast path is satisfied.
 ## local test
 
 ```
@@ -10,7 +10,7 @@ go build -o leobat
 ./leobat -c conf/single/node1.json -n 1 > log/node1.log 2>&1
 ./leobat -c conf/single/node2.json -n 1 > log/node2.log 2>&1
 ./leobat -c conf/single/node3.json -n 1 > log/node3.log 2>&1
-./leobat -c conf/single/node4.json -n 1 > log/node4.log 2>&1
+./leobat -c conf/single/node4.json -n 1 > log/node4.log 112>&1
 cd client
 go build -o client
 ./client 127.0.0.1:7001 127.0.0.1:6001
